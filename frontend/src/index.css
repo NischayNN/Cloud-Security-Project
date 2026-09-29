@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Same design tokens as the approved preview (light/dark follow the system setting). */
+:root{--bg:#eef1f5;--panel:#fff;--ink:#14213d;--mute:#5b6678;--line:#d9dee7;--code:#f1f4f8;--sel:#e6edf9;
+--Critical:#c62828;--High:#d9600b;--Medium:#b7791f;--Low:#2e7d6b}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1622;--panel:#172131;--ink:#e8edf5;--mute:#98a4b8;--line:#2a374d;--code:#0f1622;--sel:#1f2d45;
+--Critical:#ff6b6b;--High:#ff9a4d;--Medium:#e5b352;--Low:#5fc4ad}}
+body{background:var(--bg);color:var(--ink);font-family:'Hanken Grotesk',system-ui,sans-serif}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px}
+.mute{color:var(--mute)} .line{border-color:var(--line)}
+code,pre{background:var(--code);border-radius:6px;font-family:ui-monospace,Menlo,monospace;font-size:12px}
+button{cursor:pointer} button:disabled{opacity:.5;cursor:not-allowed}
+button:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
