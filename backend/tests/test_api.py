@@ -168,3 +168,31 @@ def test_explicit_collector_origin_is_retained_on_replay(origin):
 
 def test_post_event_rejects_invalid_origin():
     assert client.post('/events?origin=demo', json=SAMPLE_EVENTS[0]).status_code == 422
+
+
+@pytest.mark.parametrize("origin", [
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "https://multicloudsecurity.netlify.app",
+])
+def test_cors_allowed_origins(origin):
+    response = client.options(
+        "/incidents",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == origin
+
+
+def test_cors_disallows_unknown_origin():
+    response = client.options(
+        "/incidents",
+        headers={
+            "Origin": "https://unauthorized.example.com",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert response.headers.get("access-control-allow-origin") is None

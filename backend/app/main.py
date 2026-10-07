@@ -14,9 +14,17 @@ from .sqlite_store import SQLiteStore
 
 app = FastAPI(title="Multi-Cloud Incident Response API", version="0.2.0")
 
-# Lets the React dev server (Step 3) call this API from the browser.
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://localhost:3000"],
-                   allow_methods=["*"], allow_headers=["*"])
+# Lets the React dev server and deployed Netlify frontend call this API from the browser.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "https://multicloudsecurity.netlify.app",
+    ],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 store_mode = os.environ.get("CLOUD_SECURITY_STORE", "sqlite")
 if store_mode == "memory":
