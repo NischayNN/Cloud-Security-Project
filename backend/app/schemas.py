@@ -34,9 +34,17 @@ class IncidentType(str, Enum):
     OPEN_SSH = "open_ssh_security_group"
 
 
+class EventOrigin(str, Enum):
+    DEMO = "demo"
+    AWS_CLOUDTRAIL = "aws-cloudtrail"
+    FIXTURE = "fixture"
+    SUBMITTED = "submitted"
+
+
 class NormalizedEvent(BaseModel):
     """Cloud-agnostic event. Azure/GCP normalizers will produce this same shape."""
     event_id: str
+    origin: EventOrigin = EventOrigin.SUBMITTED
     provider: str = "aws"
     source: str                      # e.g. s3.amazonaws.com
     event_name: str                  # e.g. PutBucketAcl

@@ -32,6 +32,17 @@ def normalize(record: dict) -> Optional[NormalizedEvent]:
     name = record.get("eventName")
     if name not in WATCHED:
         return None
+    # A failed API call does not establish that an unsafe change happened.
+    if record.get("errorCode") or record.get("errorMessage"):
+        return None
+    expected_source = ("s3.amazonaws.com" if name in {"PutBucketAcl", "PutBucketPolicy", "DeletePublicAccessBlock"}
+                       else "iam.amazonaws.com" if name in {"AttachUserPolicy", "PutUserPolicy"}
+                       else "ec2.amazonaws.com")
+    if record.get("eventSource") != expected_source:
+        raise ValueError("Unexpected event source")
+    for field in ("eventID", "eventTime", "awsRegion", "recipientAccountId"):
+        if not isinstance(record.get(field), str) or not record[field].strip():
+            raise ValueError(f"Missing event metadata: {field}")
     p = record.get("requestParameters") or {}
     details, rtype, rid = {}, "", ""
 

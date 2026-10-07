@@ -1,13 +1,16 @@
 """FastAPI app. Run from backend/:  uvicorn app.main:app --reload"""
-from typing import Any, Optional
+import os
+from pathlib import Path
+from typing import Any, Literal, Optional
 from fastapi import Body, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .engine import process_event
 from .sample_data import SAMPLE_EVENTS
-from .schemas import Incident, Severity, Status
+from .schemas import Incident, Severity, Status, EventOrigin
 from .store import InMemoryStore, InvalidTransition
+from .sqlite_store import SQLiteStore
 
 app = FastAPI(title="Multi-Cloud Incident Response API", version="0.2.0")
 
@@ -15,7 +18,15 @@ app = FastAPI(title="Multi-Cloud Incident Response API", version="0.2.0")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://localhost:3000"],
                    allow_methods=["*"], allow_headers=["*"])
 
-store = InMemoryStore()
+store_mode = os.environ.get("CLOUD_SECURITY_STORE", "sqlite")
+if store_mode == "memory":
+    store = InMemoryStore()
+elif store_mode == "sqlite":
+    database_path = os.environ.get("CLOUD_SECURITY_DB_PATH") or str(
+        Path(__file__).resolve().parent.parent / "data" / "incidents.sqlite3")
+    store = SQLiteStore(database_path)
+else:
+    raise ValueError("CLOUD_SECURITY_STORE must be sqlite or memory")
 
 
 class StatusUpdate(BaseModel):
@@ -30,10 +41,10 @@ class EventResult(BaseModel):
     incident: Optional[Incident] = None
 
 
-def ingest(raw: dict) -> EventResult:
+def ingest(raw: dict, origin: EventOrigin = EventOrigin.SUBMITTED) -> EventResult:
     """Shared by POST /events and POST /demo/load: engine -> store."""
     try:
-        incident = process_event(raw)
+        incident = process_event(raw, origin)
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise HTTPException(422, f"Could not parse event, missing or invalid field: {exc!r}")
     if incident is None:
@@ -60,9 +71,10 @@ def get_incident(incident_id: str):
 
 
 @app.post("/events", response_model=EventResult)
-def post_event(response: Response, raw: dict[str, Any] = Body(...)):
+def post_event(response: Response, raw: dict[str, Any] = Body(...),
+               origin: Literal["submitted", "aws-cloudtrail", "fixture"] = "submitted"):
     """Send one CloudTrail record (or EventBridge envelope). 201 = new incident, 200 = otherwise."""
-    result = ingest(raw)
+    result = ingest(raw, EventOrigin(origin))
     if result.detected and not result.duplicate:
         response.status_code = 201
     return result
@@ -75,7 +87,7 @@ def load_demo(reset: bool = False):
         store.clear()
     summary = {"events_processed": 0, "incidents_created": 0, "duplicates_skipped": 0, "no_incident": 0}
     for raw in SAMPLE_EVENTS:
-        result = ingest(raw)
+        result = ingest(raw, EventOrigin.DEMO)
         summary["events_processed"] += 1
         if not result.detected:
             summary["no_incident"] += 1

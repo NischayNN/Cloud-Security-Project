@@ -1,4 +1,4 @@
-"""In-memory incident storage. In Step 4 a DynamoDB class with these same methods replaces it."""
+"""In-memory incident storage for isolated tests and optional disposable demos."""
 from threading import Lock
 from typing import Optional
 from .schemas import Incident, HistoryEntry, Status, STATUS_ORDER, now

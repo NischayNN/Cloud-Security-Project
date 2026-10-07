@@ -6,7 +6,7 @@ export default function Playbook({ steps, resource }) {
   const count = steps.filter((_, n) => done[n]).length;
   return (
     <>
-      <h3 className="font-semibold mt-5 mb-2">Response playbook <span className="mute font-normal text-sm">{count}/{steps.length} done</span></h3>
+      <h3 id="response-playbook" className="font-semibold mt-5 mb-2">Response playbook <span className="mute font-normal text-sm">{count}/{steps.length} done</span></h3>
       <div className="space-y-3">
         {steps.map((s, n) => (
           <label key={n} className="flex gap-3 items-start">

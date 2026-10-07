@@ -1,16 +1,17 @@
 """The pipeline: raw event -> normalize -> detect -> severity -> playbook -> Incident."""
 from typing import Optional
-from .schemas import Incident, HistoryEntry, Status
+from .schemas import Incident, HistoryEntry, Status, EventOrigin
 from .normalizer import normalize
 from .rules import detect
 from .severity import assess
 from .playbooks import get_playbook
 
 
-def process_event(raw: dict) -> Optional[Incident]:
+def process_event(raw: dict, origin: EventOrigin = EventOrigin.SUBMITTED) -> Optional[Incident]:
     event = normalize(raw)
     if event is None:
         return None                       # not an event we watch
+    event.origin = origin
     hit = detect(event)
     if hit is None:
         return None                       # watched event, but harmless

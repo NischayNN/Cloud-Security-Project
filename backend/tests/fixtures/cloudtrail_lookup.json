@@ -1,0 +1,12 @@
+{
+  "Events": [
+    {
+      "EventId": "fixture-ssh-success",
+      "CloudTrailEvent": "{\"eventVersion\": \"1.09\", \"eventID\": \"fixture-ssh-success\", \"eventName\": \"AuthorizeSecurityGroupIngress\", \"eventSource\": \"ec2.amazonaws.com\", \"eventTime\": \"2026-10-06T10:00:00Z\", \"awsRegion\": \"ap-south-1\", \"recipientAccountId\": \"123456789012\", \"sourceIPAddress\": \"203.0.113.10\", \"userIdentity\": {\"type\": \"AssumedRole\", \"arn\": \"arn:aws:sts::123456789012:assumed-role/Student/fixture-session\"}, \"requestParameters\": {\"groupId\": \"sg-fixture-only\", \"ipPermissions\": {\"items\": [{\"ipProtocol\": \"tcp\", \"fromPort\": 22, \"toPort\": 22, \"ipRanges\": {\"items\": [{\"cidrIp\": \"0.0.0.0/0\"}]}, \"ipv6Ranges\": {}}]}}}"
+    },
+    {
+      "EventId": "fixture-ssh-denied",
+      "CloudTrailEvent": "{\"eventVersion\": \"1.09\", \"eventID\": \"fixture-ssh-denied\", \"eventName\": \"AuthorizeSecurityGroupIngress\", \"eventSource\": \"ec2.amazonaws.com\", \"eventTime\": \"2026-10-06T10:00:00Z\", \"awsRegion\": \"ap-south-1\", \"recipientAccountId\": \"123456789012\", \"sourceIPAddress\": \"203.0.113.10\", \"userIdentity\": {\"type\": \"AssumedRole\", \"arn\": \"arn:aws:sts::123456789012:assumed-role/Student/fixture-session\"}, \"requestParameters\": {\"groupId\": \"sg-fixture-only\", \"ipPermissions\": {\"items\": [{\"ipProtocol\": \"tcp\", \"fromPort\": 22, \"toPort\": 22, \"ipRanges\": {\"items\": [{\"cidrIp\": \"0.0.0.0/0\"}]}, \"ipv6Ranges\": {}}]}}, \"errorCode\": \"Client.UnauthorizedOperation\", \"errorMessage\": \"Synthetic denied request\"}"
+    }
+  ]
+}

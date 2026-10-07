@@ -4,3 +4,8 @@ dist/
 __pycache__/
 .pytest_cache/
 .env
+
+# Local incident database, including journal files and local backups
+backend/data/
+
+.DS_Store

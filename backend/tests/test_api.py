@@ -3,6 +3,9 @@ import copy
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app, store
+from app import main as api
+from app.sqlite_store import SQLiteStore
+from app.store import InMemoryStore
 from app.sample_data import SAMPLE_EVENTS
 
 client = TestClient(app)
@@ -10,9 +13,11 @@ EXPECTED = {"evt-0001": "Medium", "evt-0002": "Critical", "evt-0003": "Critical"
             "evt-0004": "High", "evt-0005": "Critical", "evt-0006": "Low", "evt-0007": None}
 
 
-@pytest.fixture(autouse=True)
-def fresh_store():
-    store.clear()
+@pytest.fixture(autouse=True, params=["memory", "sqlite"])
+def fresh_store(request, tmp_path, monkeypatch):
+    isolated = (InMemoryStore() if request.param == "memory"
+                else SQLiteStore(tmp_path / "test-incidents.sqlite3"))
+    monkeypatch.setattr(api, "store", isolated)
 
 
 def first_id(severity=None):
@@ -139,3 +144,27 @@ def test_status_404_and_bad_value():
     iid = first_id()
     assert client.patch(f"/incidents/{iid}/status", json={"status": "Fixed"}).status_code == 422
     assert client.patch(f"/incidents/{iid}/status", json={}).status_code == 422
+
+
+def test_demo_and_submitted_origins_are_distinct():
+    client.post('/demo/load')
+    assert all(i['event']['origin'] == 'demo' for i in client.get('/incidents').json())
+    raw = copy.deepcopy(SAMPLE_EVENTS[0])
+    raw['eventID'] = 'origin-submitted'
+    raw['origin'] = 'aws-cloudtrail'  # Body metadata cannot silently claim AWS ingestion.
+    response = client.post('/events', json=raw)
+    assert response.json()['incident']['event']['origin'] == 'submitted'
+
+
+@pytest.mark.parametrize('origin', ['aws-cloudtrail', 'fixture'])
+def test_explicit_collector_origin_is_retained_on_replay(origin):
+    raw = copy.deepcopy(SAMPLE_EVENTS[0])
+    response = client.post('/events?origin=' + origin, json=raw)
+    assert response.json()['incident']['event']['origin'] == origin
+    replay = client.post('/events', json=raw)
+    assert replay.json()['duplicate'] is True
+    assert replay.json()['incident']['event']['origin'] == origin
+
+
+def test_post_event_rejects_invalid_origin():
+    assert client.post('/events?origin=demo', json=SAMPLE_EVENTS[0]).status_code == 422

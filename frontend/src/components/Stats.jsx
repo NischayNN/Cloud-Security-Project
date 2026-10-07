@@ -1,19 +1,17 @@
 import { SEVERITIES, sevColor } from "../constants.js";
+import Icon from './Icon.jsx';
 
 export default function Stats({ incidents, sevF, onSelect }) {
-  return (
-    <section className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-      {SEVERITIES.map((s) => {
-        const n = incidents.filter((i) => i.severity === s && i.status !== "Resolved").length;
-        return (
-          <button key={s} data-testid={`tile-${s}`} onClick={() => onSelect(s)}
-                  className={`panel p-3 text-left ${sevF === s ? "ring-2" : ""}`}
-                  style={{ borderLeft: `6px solid ${sevColor(s)}`, ...(sevF === s ? { "--tw-ring-color": sevColor(s) } : {}) }}>
-            <div className="text-3xl font-bold">{n}</div>
-            <div className="text-sm mute">Open {s.toLowerCase()}</div>
-          </button>
-        );
-      })}
-    </section>
-  );
+  return <section className="stats-grid" aria-label="Open incidents by severity">
+    {SEVERITIES.map(s => {
+      const n = incidents.filter(i => i.severity === s && i.status !== 'Resolved').length;
+      return <button key={s} data-testid={`tile-${s}`} onClick={() => onSelect(s)} aria-pressed={sevF === s}
+        className={`panel stat-card ${sevF === s ? 'stat-selected' : ''}`} style={{ '--severity': sevColor(s) }}>
+        <div className="stat-label"><span className="stat-icon"><Icon name={s === 'Critical' || s === 'High' ? 'alert' : 'shield'} size={21}/></span><span>{s}<small>Priority level</small></span><Icon name="arrow" size={17}/></div>
+        <div className="stat-value">{n.toString().padStart(2, '0')}</div>
+        <div className="stat-caption">Open {s.toLowerCase()} incidents</div>
+        <div className="stat-bottom"><span>View incidents</span><Icon name="arrow" size={15}/></div>
+      </button>;
+    })}
+  </section>;
 }
