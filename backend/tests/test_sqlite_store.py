@@ -1,7 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 import pytest
 from app.engine import process_event
-from app.sample_data import SAMPLE_EVENTS
+from .sample_data import SAMPLE_EVENTS
 from app.schemas import Status, Severity, EventOrigin
 from app.sqlite_store import SQLiteStore
 from app.store import InvalidTransition

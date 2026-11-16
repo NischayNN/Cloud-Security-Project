@@ -6,7 +6,7 @@ from app.main import app, store
 from app import main as api
 from app.sqlite_store import SQLiteStore
 from app.store import InMemoryStore
-from app.sample_data import SAMPLE_EVENTS
+from .sample_data import SAMPLE_EVENTS
 
 client = TestClient(app)
 EXPECTED = {"evt-0001": "Medium", "evt-0002": "Critical", "evt-0003": "Critical",
@@ -21,7 +21,8 @@ def fresh_store(request, tmp_path, monkeypatch):
 
 
 def first_id(severity=None):
-    client.post("/demo/load")
+    for raw in SAMPLE_EVENTS:
+        client.post("/events?origin=fixture", json=raw)
     url = "/incidents" + (f"?severity={severity}" if severity else "")
     return client.get(url).json()[0]["incident_id"]
 
@@ -31,18 +32,9 @@ def test_list_empty_at_start():
     assert r.status_code == 200 and r.json() == []
 
 
-def test_demo_load_and_idempotent():
-    r = client.post("/demo/load")
-    assert r.status_code == 200
-    assert r.json() == {"events_processed": 7, "incidents_created": 6, "duplicates_skipped": 0, "no_incident": 1}
-    again = client.post("/demo/load").json()
-    assert again["incidents_created"] == 0 and again["duplicates_skipped"] == 6
-    assert len(client.get("/incidents").json()) == 6
-    assert client.post("/demo/load?reset=true").json()["incidents_created"] == 6
-
-
 def test_list_sorted_and_filters():
-    client.post("/demo/load")
+    for raw in SAMPLE_EVENTS:
+        client.post("/events?origin=fixture", json=raw)
     scores = [i["severity_score"] for i in client.get("/incidents").json()]
     assert scores == sorted(scores, reverse=True)
     crit = client.get("/incidents?severity=Critical").json()
@@ -146,10 +138,10 @@ def test_status_404_and_bad_value():
     assert client.patch(f"/incidents/{iid}/status", json={}).status_code == 422
 
 
-def test_demo_and_submitted_origins_are_distinct():
-    client.post('/demo/load')
-    assert all(i['event']['origin'] == 'demo' for i in client.get('/incidents').json())
-    raw = copy.deepcopy(SAMPLE_EVENTS[0])
+def test_fixture_and_submitted_origins_are_distinct():
+    client.post('/events?origin=fixture', json=SAMPLE_EVENTS[0])
+    assert client.get('/incidents').json()[0]['event']['origin'] == 'fixture'
+    raw = copy.deepcopy(SAMPLE_EVENTS[1])
     raw['eventID'] = 'origin-submitted'
     raw['origin'] = 'aws-cloudtrail'  # Body metadata cannot silently claim AWS ingestion.
     response = client.post('/events', json=raw)
@@ -204,13 +196,11 @@ def test_operator_key_protects_data_and_all_mutations(monkeypatch):
     for bad_headers in ({}, {'X-API-Key': 'wrong'}):
         assert client.get('/incidents', headers=bad_headers).status_code == 401
         assert client.post('/events', json=SAMPLE_EVENTS[0], headers=bad_headers).status_code == 401
-        assert client.post('/demo/load?reset=true', headers=bad_headers).status_code == 401
         assert client.patch('/incidents/INC-NOPE/status', json={'status':'Investigating'}, headers=bad_headers).status_code == 401
     assert client.post('/events', json=SAMPLE_EVENTS[0], headers=headers).status_code == 201
     data = client.get('/incidents', headers=headers).json()
     assert len(data) == 1
     assert client.get('/incidents/' + data[0]['incident_id']).status_code == 401
-    assert client.post('/demo/load', headers=headers).status_code == 200
     assert client.patch('/incidents/' + data[0]['incident_id'] + '/status',
                         json={'status':'Investigating'}, headers=headers).status_code == 200
 
@@ -219,7 +209,6 @@ def test_render_fails_closed_without_operator_key(monkeypatch):
     monkeypatch.setenv('RENDER', 'true')
     monkeypatch.delenv('CLOUD_SECURITY_API_KEY', raising=False)
     assert client.get('/incidents').status_code == 503
-    assert client.post('/demo/load').status_code == 503
     assert client.post('/events', json=SAMPLE_EVENTS[0]).status_code == 503
     result = client.options('/events', headers={'Origin':'https://multicloudsecurity.netlify.app',
         'Access-Control-Request-Method':'POST', 'Access-Control-Request-Headers':'X-API-Key'})

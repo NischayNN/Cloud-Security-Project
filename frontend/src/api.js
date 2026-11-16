@@ -37,19 +37,11 @@ async function request(path, options = {}, retry = true) {
 }
 
 async function sharedRecords() {
-  try {
-    const res = await fetch(BASE + "/public/incidents", { signal: AbortSignal.timeout(12000) });
-    if (!res.ok) throw new Error("Shared API unavailable");
-    const data = await res.json();
-    if (!Array.isArray(data)) throw new Error("Invalid shared API response");
-    return data;
-  } catch {
-    const res = await fetch("/review-archive.json");
-    if (!res.ok) throw new Error("The shared review archive is unavailable. Please try again later.");
-    const data = await res.json();
-    if (!Array.isArray(data.incidents)) throw new Error("The review archive is invalid.");
-    return data.incidents.map(i => ({ ...i, archive_fallback: true }));
-  }
+  const res = await fetch(BASE + "/public/incidents", { signal: AbortSignal.timeout(12000) });
+  if (!res.ok) throw new Error("Shared API unavailable");
+  const data = await res.json();
+  if (!Array.isArray(data)) throw new Error("Invalid shared API response");
+  return data;
 }
 
 function writable() {
@@ -57,15 +49,8 @@ function writable() {
 }
 
 export const getIncidents = () => SHARED_VIEW ? sharedRecords() : request("/incidents");
-export const getIncident = async (id) => {
-  if (!SHARED_VIEW) return request(`/incidents/${id}`);
-  const items = await sharedRecords();
-  const incident = items.find(i => i.incident_id === id);
-  if (!incident) throw new Error("Incident not found in the shared review");
-  return incident;
-};
+export const getIncident = (id) => request((SHARED_VIEW ? "/public" : "") + `/incidents/${id}`);
 export const postEvent = (rawEvent) => { writable(); return request("/events", { method: "POST", body: JSON.stringify(rawEvent) }); };
-export const loadDemo = (reset = false) => request(SHARED_VIEW ? "/public/demo/load" : `/demo/load?reset=${reset}`, { method: "POST" });
 export const updateStatus = (id, status, note = "") => {
   return request(`${SHARED_VIEW ? "/public" : ""}/incidents/${id}/status`, { method: "PATCH", body: JSON.stringify({ status, note }) });
 };

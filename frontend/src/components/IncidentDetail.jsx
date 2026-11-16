@@ -35,11 +35,11 @@ export default function IncidentDetail({ incident: i, loading = true, error, bus
         ))}
       </dl>
       <p className="mute text-sm mt-3">
-        {e.origin === "demo" || e.origin === "fixture"
-          ? "Simulated event for demonstration and testing."
+        {e.origin === "fixture"
+          ? "Simulated event for test verification."
           : e.origin === "aws-cloudtrail"
             ? "Imported from CloudTrail by the local collector. This records a past action; the resource may already be cleaned up."
-            : "Submitted event; AWS origin has not been verified."}
+            : "Submitted event; cloud provider origin has not been verified."}
       </p>
       <pre className="p-2 mt-3 overflow-x-auto" aria-label="Event details">{JSON.stringify(e.details, null, 2)}</pre>
 

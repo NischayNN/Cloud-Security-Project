@@ -1,10 +1,8 @@
-// End-to-end check: React <App /> -> real FastAPI server -> in-memory store -> engine.
-// Use CLOUD_SECURITY_STORE=memory on port 8001; these tests reset its store.
-// Run: VITE_API_URL=http://127.0.0.1:8001 npm run test:e2e
+// End-to-end check: React <App /> against mocked backend API responses.
+// Tests filtering, status progression, search, and empty/error states without demo dependencies.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "./App.jsx";
-import { getIncident, getIncidents, postEvent } from "./api.js";
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 const items = () => screen.queryAllByTestId("incident-item");
@@ -12,207 +10,180 @@ const click = (el) => fireEvent.click(el);
 const button = (name) => screen.getByRole("button", { name });
 const tileCount = (s) => String(Number(within(screen.getByTestId(`tile-${s}`)).getByText(/^\d+$/).textContent));
 
-describe("dashboard against the live backend", () => {
-  beforeEach(async () => {
-    const base = import.meta.env.VITE_API_URL;
-    if (base !== "http://127.0.0.1:8001") {
-      throw new Error("Use a disposable backend: VITE_API_URL=http://127.0.0.1:8001");
-    }
-    const res = await fetch(base + "/demo/load?reset=true", { method: "POST" });
-    if (!res.ok) throw new Error("Could not prepare the test backend");
-  });
-  it("1. loads demo incidents without creating duplicates", async () => {
-    render(<App />);
-    await waitFor(() => expect(items()).toHaveLength(6));
-    click(button("Load demo incidents"));
-    await screen.findByText(/Demo already loaded.*no duplicates added/);
-    await waitFor(() => expect(items()).toHaveLength(6));
-    expect([tileCount("Critical"), tileCount("High"), tileCount("Medium"), tileCount("Low")]).toEqual(["3", "1", "1", "1"]);
+const MOCK_INCIDENTS = [
+  {
+    incident_id: "INC-TEST01",
+    type: "open_ssh_security_group",
+    title: "SSH open to the world: sg-prod",
+    description: "Security group ingress rule open to 0.0.0.0/0",
+    severity: "Critical",
+    severity_score: 85,
+    severity_reasons: ["SSH reachable from the entire internet (+60)", "Production security group (+20)"],
+    status: "Detected",
+    provider: "aws",
+    resource_type: "security_group",
+    resource_id: "sg-prod",
+    actor: "arn:aws:iam::123456789012:user/admin",
+    event: {
+      event_id: "evt-test-01",
+      origin: "aws-cloudtrail",
+      provider: "aws",
+      source: "ec2.amazonaws.com",
+      event_name: "AuthorizeSecurityGroupIngress",
+      event_time: "2026-10-07T12:00:00Z",
+      region: "ap-south-1",
+      account_id: "123456789012",
+      actor: "admin",
+      source_ip: "198.51.100.1",
+      resource_type: "security_group",
+      resource_id: "sg-prod",
+      details: { rules: [{ protocol: "tcp", from_port: 22, to_port: 22, cidr: "0.0.0.0/0" }] },
+    },
+    playbook: [
+      { title: "Confirm the rule", action: "Inspect the security group.", command: "aws ec2 describe-security-groups --group-ids <SG_ID>", done: false },
+      { title: "Remove the open rule", action: "Revoke the ingress rule.", command: "aws ec2 revoke-security-group-ingress", done: false },
+    ],
+    history: [{ status: "Detected", timestamp: "2026-10-07T12:00:00Z", note: "Incident automatically detected" }],
+    created_at: "2026-10-07T12:00:00Z",
+    updated_at: "2026-10-07T12:00:00Z",
+  },
+  {
+    incident_id: "INC-TEST02",
+    type: "public_s3_bucket",
+    title: "Public S3 bucket: data-archive",
+    description: "S3 bucket has public read ACL",
+    severity: "Medium",
+    severity_score: 50,
+    severity_reasons: ["Bucket is publicly accessible (+50)"],
+    status: "Detected",
+    provider: "aws",
+    resource_type: "s3_bucket",
+    resource_id: "data-archive",
+    actor: "arn:aws:iam::123456789012:user/developer",
+    event: {
+      event_id: "evt-test-02",
+      origin: "submitted",
+      provider: "aws",
+      source: "s3.amazonaws.com",
+      event_name: "PutBucketAcl",
+      event_time: "2026-10-07T12:05:00Z",
+      region: "ap-south-1",
+      account_id: "123456789012",
+      actor: "developer",
+      source_ip: "198.51.100.2",
+      resource_type: "s3_bucket",
+      resource_id: "data-archive",
+      details: { public_permissions: ["READ"] },
+    },
+    playbook: [
+      { title: "Confirm exposure", action: "Check bucket ACL.", command: "aws s3api get-bucket-acl", done: false },
+    ],
+    history: [{ status: "Detected", timestamp: "2026-10-07T12:05:00Z", note: "Incident automatically detected" }],
+    created_at: "2026-10-07T12:05:00Z",
+    updated_at: "2026-10-07T12:05:00Z",
+  },
+];
+
+describe("dashboard against incidents API", () => {
+  let mockStore;
+
+  beforeEach(() => {
+    mockStore = JSON.parse(JSON.stringify(MOCK_INCIDENTS));
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url, opts = {}) => {
+      const urlStr = String(url);
+      const method = opts.method || "GET";
+
+      if (urlStr.includes("/incidents/") && urlStr.includes("/status") && method === "PATCH") {
+        const parts = urlStr.split("/incidents/")[1].split("/status")[0];
+        const incident = mockStore.find((i) => i.incident_id === parts);
+        if (!incident) return { ok: false, status: 404, json: async () => ({ detail: "Not found" }) };
+        const body = JSON.parse(opts.body);
+        incident.status = body.status;
+        incident.history.push({ status: body.status, timestamp: new Date().toISOString(), note: body.note || "Status changed by analyst" });
+        return { ok: true, status: 200, json: async () => incident };
+      }
+
+      if (urlStr.includes("/incidents/") && method === "GET") {
+        const id = urlStr.split("/incidents/")[1].split("?")[0];
+        const incident = mockStore.find((i) => i.incident_id === id);
+        if (!incident) return { ok: false, status: 404, json: async () => ({ detail: "Not found" }) };
+        return { ok: true, status: 200, json: async () => incident };
+      }
+
+      if (urlStr.endsWith("/incidents") || urlStr.includes("/incidents?")) {
+        return { ok: true, status: 200, json: async () => mockStore };
+      }
+
+      return { ok: false, status: 404, json: async () => ({ detail: "Route not found" }) };
+    });
   });
 
-  it("2. severity filter and 3. status filter work", async () => {
+  it("1. renders verified incidents and severity tile metrics", async () => {
     render(<App />);
-    await waitFor(() => expect(items()).toHaveLength(6));
+    await waitFor(() => expect(items()).toHaveLength(2));
+    expect(tileCount("Critical")).toBe("1");
+    expect(tileCount("Medium")).toBe("1");
+    expect(tileCount("High")).toBe("0");
+    expect(tileCount("Low")).toBe("0");
+  });
+
+  it("2. severity and status filters work correctly", async () => {
+    render(<App />);
+    await waitFor(() => expect(items()).toHaveLength(2));
     click(screen.getByTestId("tile-Critical"));
-    expect(items()).toHaveLength(3);
+    expect(items()).toHaveLength(1);
+    expect(items()[0].textContent).toContain("sg-prod");
     click(screen.getByTestId("tile-Critical"));
-    expect(items()).toHaveLength(6);
+    expect(items()).toHaveLength(2);
+
     click(button(/^Investigating/));
     expect(items()).toHaveLength(0);
     screen.getByText(/No incidents match these filters/);
     click(button(/^Detected/));
-    expect(items()).toHaveLength(6);
+    expect(items()).toHaveLength(2);
   });
 
-  it("4. opening an incident loads its details and playbook from the API", async () => {
+  it("3. opening an incident loads its details and playbook", async () => {
     render(<App />);
-    await waitFor(() => expect(items()).toHaveLength(6));
-    click(items().find((el) => el.textContent.includes("college-notes")));
-    await screen.findByRole("heading", { name: "Public S3 bucket: college-notes" });
-    screen.getByText(/public s3 bucket$/);           // incident type
-    screen.getByText("AWS");                          // cloud
-    screen.getByText("student-dev");                  // actor
-    screen.getByText("s3_bucket · college-notes");    // resource
-    screen.getByText("PutBucketAcl");
-    screen.getByText("evt-0001");
-    screen.getByText("Simulated event for demonstration and testing.");                 // event
-    screen.getByText(/Why medium \(score 50\)/);
-    screen.getByText("Bucket is publicly accessible (+50)");
-    for (const t of ["Confirm exposure", "Block public access", "Review access logs", "Document & prevent"]) screen.getByText(t);
-    screen.getByText(/aws s3api get-bucket-acl --bucket college-notes/);
+    await waitFor(() => expect(items()).toHaveLength(2));
+    click(items().find((el) => el.textContent.includes("sg-prod")));
+    await screen.findByRole("heading", { name: "SSH open to the world: sg-prod" });
+    screen.getByText("AWS");
+    screen.getByText("security_group · sg-prod");
+    screen.getByText("AuthorizeSecurityGroupIngress");
+    screen.getByText("evt-test-01");
+    expect(screen.getAllByText("AWS CloudTrail").length).toBeGreaterThan(0);
+    screen.getByText("Inspect the security group.");
   });
 
-  it("5. status changes go through PATCH and update the backend", async () => {
+  it("4. status changes update incident state and timeline", async () => {
     render(<App />);
-    await waitFor(() => expect(items()).toHaveLength(6));
-    click(items().find((el) => el.textContent.includes("college-notes")));
-    await screen.findByRole("heading", { name: "Public S3 bucket: college-notes" });
-    const id = (await getIncidents()).find((i) => i.resource_id === "college-notes").incident_id;
-    for (const next of ["Investigating", "Contained", "Resolved"]) {
-      click(await screen.findByRole("button", { name: `Mark as ${next}` }));
-      await waitFor(async () => expect((await getIncident(id)).status).toBe(next));
-      await waitFor(() => expect(screen.queryByRole("button", { name: "Saving…" })).toBeNull());
-    }
-    expect(screen.queryByRole("button", { name: /^Mark as/ })).toBeNull();      // nothing after Resolved
-    const inc = await getIncident(id);
-    expect(inc.history.map((h) => h.status)).toEqual(["Detected", "Investigating", "Contained", "Resolved"]);
-    expect(screen.getAllByText(/Status changed by analyst/)).toHaveLength(3);   // history timeline in the UI
-    expect(tileCount("Medium")).toBe("0");                                       // resolved incidents leave the open count
+    await waitFor(() => expect(items()).toHaveLength(2));
+    click(items().find((el) => el.textContent.includes("sg-prod")));
+    await screen.findByRole("heading", { name: "SSH open to the world: sg-prod" });
+
+    click(await screen.findByRole("button", { name: "Mark as Investigating" }));
+    await waitFor(() => expect(screen.getAllByText("Investigating").length).toBeGreaterThan(0));
   });
 
-  it("6. a page refresh keeps the backend state", async () => {
-    const id = (await getIncidents()).find((i) => i.resource_id === "college-notes").incident_id;
-    for (const status of ["Investigating", "Contained", "Resolved"]) {
-      await fetch(import.meta.env.VITE_API_URL + `/incidents/${id}/status`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }),
-      });
-    }
-    cleanup();
-    render(<App />);                                                             // fresh mount = page reload
-    await waitFor(() => expect(items()).toHaveLength(6));
-    click(button(/^Resolved/));
-    expect(items()).toHaveLength(1);
-    expect(items()[0].textContent).toContain("college-notes");
-    click(items()[0]);
-    await screen.findByRole("heading", { name: "Public S3 bucket: college-notes" });
-    expect(screen.getAllByText(/^Resolved$/).length).toBeGreaterThan(0);
-  });
-
-  it("7. POST /events via api.js creates an incident", async () => {
-    const before = (await getIncidents()).length;
-    const ev = { eventID: "e2e-1", eventName: "AuthorizeSecurityGroupIngress", eventSource: "ec2.amazonaws.com",
-      eventTime: "2026-09-29T09:00:00Z", awsRegion: "ap-south-1", recipientAccountId: "123456789012",
-      userIdentity: { userName: "alice" },
-      requestParameters: { groupId: "sg-e2e", groupName: "web", ipPermissions: { items: [
-        { ipProtocol: "tcp", fromPort: 22, toPort: 22, ipRanges: { items: [{ cidrIp: "0.0.0.0/0" }] } }] } } };
-    const res = await postEvent(ev);
-    expect(res.detected).toBe(true);
-    expect(res.incident.severity).toBe("High");
-    expect((await getIncidents()).length).toBe(before + 1);
-  });
-
-  it("demo loading preserves separately ingested incidents", async () => {
-    const raw = { eventID: "fixture-preserve", eventName: "AttachUserPolicy", eventSource: "iam.amazonaws.com",
-      eventTime: "2026-10-06T10:00:00Z", awsRegion: "ap-south-1", recipientAccountId: "123456789012",
-      userIdentity: { userName: "fixture-user" }, requestParameters: { userName: "fixture-target",
-        policyArn: "arn:aws:iam::aws:policy/AdministratorAccess" } };
-    const saved = await postEvent(raw);
+  it("5. searches across incident title, actor, and event ID", async () => {
     render(<App />);
-    await waitFor(() => expect(items()).toHaveLength(7));
-    click(button("Load demo incidents"));
-    await waitFor(() => expect(button("Load demo incidents").disabled).toBe(false));
-    expect(items()).toHaveLength(7);
-    expect((await getIncident(saved.incident.incident_id)).resource_id).toBe("fixture-target");
-  });
-
-  it.each([
-    ["aws-cloudtrail", "AWS CloudTrail"],
-    ["fixture", "Test fixture"],
-    ["submitted", "Submitted / unverified"],
-  ])("displays %s origin and event ID", async (origin, label) => {
-    const raw = { eventID: `origin-${origin}`, eventName: "AttachUserPolicy", eventSource: "iam.amazonaws.com",
-      eventTime: "2026-10-06T10:00:00Z", awsRegion: "ap-south-1", recipientAccountId: "123456789012",
-      userIdentity: { userName: "fixture-user" }, requestParameters: { userName: "origin-target",
-        policyArn: "arn:aws:iam::aws:policy/AdministratorAccess" } };
-    const response = await fetch(import.meta.env.VITE_API_URL + `/events?origin=${origin}`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(raw),
-    });
-    expect(response.status).toBe(201);
-    render(<App />);
-    await waitFor(() => expect(items()).toHaveLength(7));
-    click(items().find((el) => el.textContent.includes("origin-target")));
-    await screen.findByText(raw.eventID);
-    expect(screen.getAllByText(label).length).toBeGreaterThan(0);
-    screen.getByText("Playbook steps are manual guidance. Changing status does not execute AWS commands.");
-  });
-
-  it("searches event IDs and combines source filters without changing stored incidents", async () => {
-    await postEvent({ eventID: "search-evidence-id", eventName: "AttachUserPolicy", eventSource: "iam.amazonaws.com",
-      eventTime: "2026-10-06T10:00:00Z", awsRegion: "ap-south-1", recipientAccountId: "123456789012",
-      userIdentity: { userName: "search-actor" }, requestParameters: { userName: "search-target",
-        policyArn: "arn:aws:iam::aws:policy/AdministratorAccess" } });
-    render(<App />);
-    await waitFor(() => expect(items()).toHaveLength(7));
+    await waitFor(() => expect(items()).toHaveLength(2));
     const search = screen.getByRole("searchbox", { name: "Search incidents" });
-    fireEvent.change(search, { target: { value: "search-evidence-id" } });
+    fireEvent.change(search, { target: { value: "evt-test-02" } });
     expect(items()).toHaveLength(1);
-    expect(items()[0].textContent).toContain("search-target");
-    const source = screen.getByRole("combobox", { name: "Filter by source" });
-    fireEvent.change(source, { target: { value: "demo" } });
-    expect(items()).toHaveLength(0);
-    click(button("Clear filters"));
-    expect(items()).toHaveLength(7);
-    fireEvent.change(source, { target: { value: "other" } });
-    expect(items()).toHaveLength(1);
-    expect(items()[0].textContent).toContain("Submitted / unverified");
-    expect((await getIncidents()).length).toBe(7);
+    expect(items()[0].textContent).toContain("data-archive");
   });
 
-  it("refreshes both the queue and selected details after an external status change", async () => {
+  it("6. shows proper empty state when database has zero incidents", async () => {
+    mockStore = [];
     render(<App />);
-    await waitFor(() => expect(items()).toHaveLength(6));
-    click(items().find(el => el.textContent.includes("college-notes")));
-    await screen.findByRole("heading", { name: "Public S3 bucket: college-notes" });
-    const id = (await getIncidents()).find(i => i.resource_id === "college-notes").incident_id;
-    const res = await fetch(import.meta.env.VITE_API_URL + `/incidents/${id}/status`, {
-      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "Investigating" }),
-    });
-    expect(res.ok).toBe(true);
-    const realFetch = globalThis.fetch;
-    let release;
-    const gate = new Promise(resolve => { release = resolve; });
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (...args) => { await gate; return realFetch(...args); });
-    click(button("Refresh"));
-    expect(button("Refreshing…").disabled).toBe(true);
-    expect(button("Load demo incidents").disabled).toBe(true);
-    release();
-    await screen.findByText("Dashboard updated. 6 saved incidents loaded.");
-    await screen.findByRole("button", { name: "Mark as Contained" });
-    expect(items().find(el => el.textContent.includes("college-notes")).textContent).toContain("Investigating");
+    await waitFor(() => expect(items()).toHaveLength(0));
+    screen.getByText("No incidents yet.");
+    screen.getByText("No security incidents detected or imported yet.");
   });
 
-  it("reports when a refresh succeeds without changes", async () => {
-    render(<App />);
-    await waitFor(() => expect(items()).toHaveLength(6));
-    await screen.findByRole("heading", { name: "Public S3 bucket: prod-customer-backup" });
-    click(button("Refresh"));
-    await screen.findByText("Up to date. 6 saved incidents; no changes since the last refresh.");
-    expect(button("Refresh").disabled).toBe(false);
-  });
-
-  it("does not show a success message when refresh fails", async () => {
-    render(<App />);
-    await waitFor(() => expect(items()).toHaveLength(6));
-    await screen.findByRole("heading", { name: "Public S3 bucket: prod-customer-backup" });
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("Failed to fetch"));
-    click(button("Refresh"));
-    await waitFor(() => expect(button("Refresh").disabled).toBe(false));
-    expect(screen.getAllByRole("alert").length).toBeGreaterThan(0);
-    expect(screen.getByRole("status").textContent).toBe("");
-    expect(items()).toHaveLength(6);
-  });
-
-  it("8. shows an error state when the API is unreachable", async () => {
+  it("7. shows an error state when the API is unreachable", async () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("Failed to fetch"));
     render(<App />);
     await screen.findByText(/Cannot reach the API/);

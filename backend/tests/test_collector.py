@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 from app import aws_collector as collector
 from app.main import app, store
-from app.sample_data import SAMPLE_EVENTS
+from .sample_data import SAMPLE_EVENTS
 
 FIXTURE = Path(__file__).parent / "fixtures" / "cloudtrail_lookup.json"
 
@@ -51,8 +51,9 @@ def test_fixture_pipeline_and_replay(transport):
     assert "assumed-role" in incidents[0]["actor"]
     assert run_fixture().duplicates == 1
     assert len(transport.get("/incidents").json()) == 1
-    transport.post("/demo/load")
-    assert len(transport.get("/incidents").json()) == 7
+    # Distinct fixture event ingestion works alongside existing incidents
+    transport.post("/events?origin=fixture", json=SAMPLE_EVENTS[0])
+    assert len(transport.get("/incidents").json()) == 2
 
 
 @pytest.mark.parametrize("envelope", [False, True])

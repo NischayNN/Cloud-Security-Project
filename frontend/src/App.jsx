@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getIncidents, getIncident, loadDemo, updateStatus, SHARED_VIEW } from "./api.js";
+import { getIncidents, getIncident, updateStatus, SHARED_VIEW } from "./api.js";
 import Stats from "./components/Stats.jsx";
 import IncidentFilters from "./components/IncidentFilters.jsx";
 import IncidentList from "./components/IncidentList.jsx";
@@ -103,32 +103,10 @@ export default function App() {
     }
   }
 
-  // Sample loading is additive; the API skips events already in the store.
-  async function handleLoadDemo() {
-    if (action || busy) return;
-    setAction('demo');
-    setNotice('');
-    try {
-      const result = await loadDemo();
-      const latest = await refreshList();
-      if (!latest) return;
-      setDetailError(null);
-      clearFilters();
-      if (selectedId) await refreshDetail(selectedId);
-      setNotice(result.incidents_created
-        ? `Added ${result.incidents_created} simulated demo incidents. Existing incidents were kept.`
-        : `Demo already loaded. ${result.duplicates_skipped} existing demo incidents kept; no duplicates added.`);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setAction(null);
-    }
-  }
-
   const visible = incidents.filter(i => {
     const origin = i.event.origin;
     const matchesSource = originF === "all" || (originF === "other"
-      ? !["demo", "aws-cloudtrail"].includes(origin) : origin === originF);
+      ? origin !== "aws-cloudtrail" : origin === originF);
     const text = [i.title, i.actor, i.resource_id, i.incident_id, i.event.event_name, i.event.event_id].join(" ").toLowerCase();
     return (!sevF || i.severity === sevF) && (stF === "All" || i.status === stF)
       && matchesSource && text.includes(query.trim().toLowerCase());
@@ -163,23 +141,23 @@ export default function App() {
     <main className="main-content">
       <header className="topbar"><div className="breadcrumb"><Icon name="home" size={22}/><span>Overview</span><span>/</span><strong>Dashboard</strong></div><label className="search-field"><Icon name="search" size={18}/><input type="search" aria-label="Search incidents" placeholder="Search incidents…" value={query} onChange={e => setQuery(e.target.value)}/></label></header>
       <div className="page-content">
-        <section id="overview" className="page-heading"><div><div className={`snapshot-line ${error ? 'connection-error' : ''}`}><i/>{loading ? 'Connecting…' : error ? 'API unavailable' : refreshedAt ? `Last refreshed ${refreshedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : 'Waiting for data'}<span>· Manual refresh</span></div><h1>Cloud security,<br/><span>at a glance.</span></h1><p className="mute">Your incidents. A clearer perspective.</p></div><div className="page-action-area"><div className="page-actions"><button className="button primary" onClick={handleRefresh} disabled={busy || !!action || loading} aria-describedby="refresh-help"><Icon name="refresh" size={16} className={action === 'refresh' ? 'refresh-spinning' : ''}/>{action === 'refresh' ? 'Refreshing…' : 'Refresh'}</button><button className="button secondary" onClick={handleLoadDemo} disabled={busy || !!action || loading} aria-describedby="demo-help"><Icon name="flask" size={16}/>{action === 'demo' ? 'Loading demo…' : 'Load demo incidents'}</button></div><p className="action-help"><span id="refresh-help">Refresh reloads saved incidents, not new AWS events.</span><span id="demo-help">Load demo adds simulated examples for testing.</span></p></div></section>
+        <section id="overview" className="page-heading"><div><div className={`snapshot-line ${error ? 'connection-error' : ''}`}><i/>{loading ? 'Connecting…' : error ? 'API unavailable' : refreshedAt ? `Last refreshed ${refreshedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : 'Waiting for data'}<span>· Manual refresh</span></div><h1>Cloud security,<br/><span>at a glance.</span></h1><p className="mute">Your incidents. A clearer perspective.</p></div><div className="page-action-area"><div className="page-actions"><button className="button primary" onClick={handleRefresh} disabled={busy || !!action || loading} aria-describedby="refresh-help"><Icon name="refresh" size={16} className={action === 'refresh' ? 'refresh-spinning' : ''}/>{action === 'refresh' ? 'Refreshing…' : 'Refresh'}</button></div><p className="action-help"><span id="refresh-help">Refresh reloads saved incidents from the backend.</span></p></div></section>
         <div role="status" aria-live="polite" aria-atomic="true" className={`action-notice ${action || notice ? 'is-visible' : ''}`}>
-          {(action || notice) && <><Icon name={action ? 'refresh' : 'check'} size={16}/><span>{action === 'refresh' ? 'Refreshing saved incidents and selected details…' : action === 'demo' ? 'Loading simulated sample events…' : notice}</span></>}
+          {(action || notice) && <><Icon name={action ? 'refresh' : 'check'} size={16}/><span>{action === 'refresh' ? 'Refreshing saved incidents and selected details…' : notice}</span></>}
         </div>
 
-        {SHARED_VIEW && <div className="panel p-4 mb-4" role="note"><strong>Classroom demo</strong><p className="mute mt-1">Four historical AWS test incidents and six simulated samples. Try the status workflow and response checklists. Actions are manual and do not change AWS resources.</p>{incidents.some(i => i.archive_fallback) && <p className="mute mt-1">The backend is unavailable. Showing the published review archive.</p>}</div>}
+        {SHARED_VIEW && <div className="panel p-4 mb-4" role="note"><strong>Incident Review</strong><p className="mute mt-1">Reviewing verified cloud security incidents. Actions are manual and do not alter cloud resources directly.</p></div>}
         {error && <div role="alert" className="panel error-banner"><b>Something went wrong.</b> {error}<div className="mute mt-1">{SHARED_VIEW ? "The shared review is temporarily unavailable. Please try again later." : <>Start the backend with <code>uvicorn app.main:app --reload</code> from the backend folder, then press Refresh.</>}</div></div>}
         {loading ? <div className="panel loading-state mute">Loading incidents…</div> : <>
           <Stats incidents={incidents} sevF={sevF} onSelect={s => setSevF(sevF === s ? null : s)}/>
-          {!incidents.length && !error && <div className="panel empty-state"><Icon name="shield" size={28}/><div><strong>No incidents yet.</strong><p className="mute">Load the sample AWS events to run them through the detection engine.</p></div></div>}
+          {!incidents.length && !error && <div className="panel empty-state"><Icon name="shield" size={28}/><div><strong>No incidents yet.</strong><p className="mute">No security incidents detected or imported yet.</p></div></div>}
           <section id="incident-workspace" className="incident-workspace">
             <div className="section-heading incident-section-heading"><div><div className="section-kicker"><Icon name="activity" size={17}/>Investigation</div><h2>Incident overview</h2></div><span className="subtle-pill">{visible.length} of {incidents.length} incidents</span></div>
-            <div className="filter-toolbar"><p className="mute">Select an incident to review its details.</p><div className="filter-actions"><label className="source-select"><span className="sr-only">Filter by source</span><select aria-label="Filter by source" value={originF} onChange={e => setOriginF(e.target.value)}><option value="all">All sources</option><option value="aws-cloudtrail">AWS CloudTrail</option><option value="demo">Demo samples</option><option value="other">Other submissions</option></select></label>{(query || originF !== 'all' || sevF || stF !== 'All') && <button className="clear-filters" onClick={clearFilters}>Clear filters</button>}</div></div>
+            <div className="filter-toolbar"><p className="mute">Select an incident to review its details.</p><div className="filter-actions"><label className="source-select"><span className="sr-only">Filter by source</span><select aria-label="Filter by source" value={originF} onChange={e => setOriginF(e.target.value)}><option value="all">All sources</option><option value="aws-cloudtrail">AWS CloudTrail</option><option value="other">Other submissions</option></select></label>{(query || originF !== 'all' || sevF || stF !== 'All') && <button className="clear-filters" onClick={clearFilters}>Clear filters</button>}</div></div>
             <IncidentFilters incidents={incidents} stF={stF} onChange={setStF}/>
             <div className="incident-grid"><section className="panel incident-queue"><div className="queue-heading"><span>Incident queue</span><span>{visible.length}</span></div><IncidentList items={visible} selectedId={selectedId} onSelect={setSelectedId}/></section><IncidentDetail incident={current} loading={selectedId !== null} error={detailError} busy={busy} disabled={!!action} readOnly={false} onAdvance={handleAdvance}/></div>
           </section>
-          <footer className="page-footer"><span><Icon name="shield" size={14}/>Cloud Security</span><span>Demo events are simulated · Response actions are manual</span></footer>
+          <footer className="page-footer"><span><Icon name="shield" size={14}/>Cloud Security</span><span>Real-time cloud activity monitoring · Response actions are manual</span></footer>
         </>}
       </div>
     </main>

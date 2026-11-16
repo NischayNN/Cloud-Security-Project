@@ -1,4 +1,4 @@
-"""In-memory incident storage for isolated tests and optional disposable demos."""
+"""In-memory incident storage for isolated tests and ephemeral sessions."""
 from threading import Lock
 from typing import Optional
 from .schemas import Incident, HistoryEntry, Status, STATUS_ORDER, now

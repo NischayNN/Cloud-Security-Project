@@ -45,5 +45,4 @@ def public_incident(incident: Incident):
         },
         'playbook': [step.model_dump(mode='json') for step in get_playbook(IncidentType(kind))],
         'history': [{'status':raw['status'], 'timestamp':raw['updated_at'], 'note':'Recorded review baseline'}], 'created_at': raw['created_at'], 'updated_at': raw['updated_at'],
-        'shared_demo': True,
     }

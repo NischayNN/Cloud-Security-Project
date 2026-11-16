@@ -30,11 +30,10 @@ uvicorn app.main:app --reload
 - API: http://127.0.0.1:8000
 - Interactive docs (try every endpoint in the browser): http://127.0.0.1:8000/docs
 
-**3. Load the sample events**
+**3. Query incidents or send an event**
 
-Open `/docs`, run `POST /demo/load`, then `GET /incidents`. Or from a terminal:
+Open `/docs`, view `GET /incidents`, or ingest an event via `POST /events`. Or from a terminal:
 ```
-curl -X POST http://127.0.0.1:8000/demo/load
 curl http://127.0.0.1:8000/incidents
 ```
 
@@ -52,8 +51,9 @@ Incidents are stored locally in SQLite at `backend/data/incidents.sqlite3` by de
 | GET | `/incidents` | List incidents, highest severity first. Filters: `?severity=High&status=Detected` |
 | GET | `/incidents/{id}` | One incident: severity, reasons, resource, event, playbook, history |
 | POST | `/events` | Send one CloudTrail record (or EventBridge envelope). `201` new incident, `200` no incident or duplicate |
-| POST | `/demo/load` | Run the 7 sample events. `?reset=true` clears existing incidents first |
 | PATCH | `/incidents/{id}/status` | Body `{"status": "Investigating", "note": "optional"}`. Moves forward one step; anything else returns `409` |
+| GET | `/public/incidents` | List redacted verified incidents without requiring an operator key |
+| GET | `/public/incidents/{id}` | One redacted verified incident |
 
 ## Run the dashboard (Step 3)
 
@@ -65,13 +65,13 @@ npm run dev
 ```
 Open **http://localhost:5173** (use `localhost`, not `127.0.0.1`, because the backend's CORS setting allows that origin).
 
-1. Click **Load demo incidents** to run the 7 sample AWS events through the engine (6 incidents appear). Loading is non-destructive and preserves existing incidents.
+1. The dashboard displays genuine security incidents collected from cloud activity. Click Refresh to reload saved incidents.
 2. Click a severity card or a status chip to filter. Click an incident to open its details and playbook.
 3. Use the **Mark as …** button to move it Detected → Investigating → Contained → Resolved. Each change is saved by the backend, so a page refresh keeps it.
 
 If the backend is not at `http://127.0.0.1:8000`, copy `.env.example` to `.env` and change `VITE_API_URL`.
 
-**Automated check (React → FastAPI → store → engine).** Start a separate disposable backend with `CLOUD_SECURITY_STORE=memory uvicorn app.main:app --port 8001` from `backend/`, then:
+**Automated frontend checks.**
 ```
 cd frontend
 VITE_API_URL=http://127.0.0.1:8001 npm run test:e2e
@@ -115,7 +115,6 @@ The JSON summary reports pages, fetched records, created incidents, duplicates, 
 - Existing request-based rules are heuristic: they do not verify current AWS resource state or execute remediation.
 - The dashboard refreshes manually. Playbook checkboxes are browser-only progress.
 - SQLite persists incidents and duplicate tracking across restarts; keep the database on local disk.
-- `/demo/load?reset=true` remains an explicit destructive reset of the entire incident store. The dashboard uses non-destructive loading instead.
 - Do not expose the API publicly without configuring operator authentication as described below. No AWS resources or remediation should be created/executed without separate approval.
 
 
@@ -125,16 +124,14 @@ SQLite is included with Python; this adds no packages or AWS services. The store
 
 The default database path is anchored to `backend/data/incidents.sqlite3`, independent of the working directory. Override it with `CLOUD_SECURITY_DB_PATH=/absolute/path/incidents.sqlite3`. Choose `CLOUD_SECURITY_STORE=memory` for disposable sessions. Unsupported store modes fail explicitly.
 
-Backend tests automatically use memory or temporary test databases; they never reset the default database. Frontend integration tests must use a separate backend on port 8001 with `CLOUD_SECURITY_STORE=memory`. Do not point destructive tests at your review database.
+Backend tests automatically use memory or temporary test databases; they never reset the default database. Frontend integration tests use isolated test mocks. Do not point destructive tests at your review database.
 
-`POST /demo/load` preserves existing incidents. `POST /demo/load?reset=true` explicitly deletes **all** saved incidents, including real AWS incidents, and reloads the samples. The dashboard does not call this destructive reset.
-
-The seven existing review incidents were migrated before switching the running backend to SQLite, retaining their original IDs and history. In future, switching from memory mode to SQLite does not automatically migrate in-memory incidents. For backups, stop the backend and copy the SQLite database to a private location; avoid committing incident data, which can contain account identifiers, actor names, and IP addresses. This is local persistence, not a hosted production database.
+For backups, stop the backend and copy the SQLite database to a private location; avoid committing incident data, which can contain account identifiers, actor names, and IP addresses. This is local persistence, not a hosted production database.
 
 
 ## Event origin and presentation
 
-The normalized event includes `origin`: `demo`, `aws-cloudtrail`, `fixture`, or `submitted`. The dashboard shows readable labels and the original event ID. `/demo/load` labels samples as demo; the collector posts `?origin=aws-cloudtrail` in live mode and `?origin=fixture` in offline mode. Ordinary API submissions default to unverified; caller-provided body fields cannot silently change that default. Duplicate replay retains the first stored origin.
+The normalized event includes `origin`: `aws-cloudtrail`, `fixture`, or `submitted`. The dashboard shows readable labels and the original event ID. The collector posts `?origin=aws-cloudtrail` in live mode and `?origin=fixture` in offline mode. Ordinary API submissions default to unverified; caller-provided body fields cannot silently change that default. Duplicate replay retains the first stored origin.
 
 Origin is ingestion metadata, not cryptographic proof of authenticity: this local API is unauthenticated, and a caller can explicitly supply the supported query parameter. Verify real-event claims against AWS CloudTrail using the displayed event ID. The existing six sample incidents and the one AWS incident were labeled using their known event IDs; unknown records remain unverified. These labels persist in SQLite.
 
@@ -213,8 +210,7 @@ retrieved by an authorized live lookup use the AWS origin label. Do not claim
 replayed synthetic fixtures are new AWS events. See
 [Render free-service limitations](https://render.com/docs/free).
 
-For local-only development, leaving `CLOUD_SECURITY_API_KEY` unset preserves the
-existing demo path. Set it whenever the app is exposed outside your machine.
+For local-only development, leaving `CLOUD_SECURITY_API_KEY` unset allows local developer testing without requiring an API key. Set it whenever the app is exposed outside your machine.
 
 ## Shared read-only dashboard
 
@@ -226,39 +222,7 @@ free-text analyst notes, policy contents and response commands are excluded.
 Real AWS event IDs, timestamps, priorities and origin labels remain visible.
 The private incident endpoints and mutations still require the operator key.
 
-The published archive contains **four historical controlled AWS test incidents
-from October 7, 2026**, plus six labelled simulated incidents. These records came
-from the existing verified local review database. No new AWS operations were
-performed to publish them. The archive contains redacted fields only and is
-intentionally included in the deployed bundle and repository.
-
-`backend/app/shared_incidents.json` provides the review baseline when Render's
-SQLite store is empty after restart. Current AWS/demo incidents in the store
-merge into that public view with event-ID deduplication. Unverified submissions
-and fixtures are excluded. This archive is not a durable database for later
-imports: newly imported records must be deliberately added to a new reviewed,
-redacted archive to survive free-host restarts.
-
-`frontend/public/review-archive.json` holds the same redacted baseline. If Render
-cannot respond within 12 seconds, the shared dashboard uses this published
-archive and displays an explicit notice. Refresh updates saved results rather
-than collecting AWS events. The shared site does not imply continuous monitoring,
-confirmed compromise or current resource exposure. Historical test groups were
-unattached and subsequently deleted.
-
 Netlify's current Free plan includes credits, and a published production deploy
 uses 15 credits. Do not publish without approval when the user's instruction is
 to avoid credit consumption. Existing service URLs and Free instance plans should
 remain unchanged. No paid storage, auto-recharge or new resources are necessary.
-
-
-## Interactive classroom demo
-
-The deployed shared build now includes response playbooks, browser checkboxes,
-status progression and additive demo loading. Public status changes use a separate
-in-memory classroom workflow shared by visitors. They never alter private
-incidents or AWS resources. These workflow changes reset when the free backend
-restarts. The 4 real historical records and 6 samples remain in the archive.
-Generic CLI commands retain placeholders because original AWS identifiers remain
-hidden. Commands are manual examples and are never executed by the website.
-The prior read-only restriction is superseded by this classroom demo mode.
