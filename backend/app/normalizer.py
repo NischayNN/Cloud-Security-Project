@@ -1,13 +1,15 @@
-"""Turns raw AWS CloudTrail records (or EventBridge envelopes) into NormalizedEvent."""
+"""Normalizes raw cloud provider audit records into provider-independent NormalizedEvent."""
 import json
-from typing import Optional
-from .schemas import NormalizedEvent
+from typing import Callable, Optional, Union
+from .schemas import CloudProvider, NormalizedEvent
 
-WATCHED = {
+WATCHED_AWS = {
     "PutBucketAcl", "PutBucketPolicy", "DeletePublicAccessBlock",
     "AttachUserPolicy", "PutUserPolicy",
     "AuthorizeSecurityGroupIngress",
 }
+# Backward compatibility alias
+WATCHED = WATCHED_AWS
 
 
 def _statements(doc) -> list[dict]:
@@ -27,10 +29,12 @@ def _statements(doc) -> list[dict]:
     return out
 
 
-def normalize(record: dict) -> Optional[NormalizedEvent]:
+def normalize_aws(record: dict) -> Optional[NormalizedEvent]:
+    """Normalizes AWS CloudTrail records or EventBridge envelopes."""
+    raw_copy = dict(record)
     record = record.get("detail", record)          # unwrap EventBridge envelope
     name = record.get("eventName")
-    if name not in WATCHED:
+    if name not in WATCHED_AWS:
         return None
     # A failed API call does not establish that an unsafe change happened.
     if record.get("errorCode") or record.get("errorMessage"):
@@ -78,9 +82,71 @@ def normalize(record: dict) -> Optional[NormalizedEvent]:
 
     ident = record.get("userIdentity", {})
     return NormalizedEvent(
-        event_id=record.get("eventID", ""), source=record.get("eventSource", ""),
-        event_name=name, event_time=record.get("eventTime", ""),
-        region=record.get("awsRegion", ""), account_id=record.get("recipientAccountId", ""),
+        event_id=record.get("eventID", ""),
+        provider=CloudProvider.AWS,
+        source=record.get("eventSource", ""),
+        event_name=name,
+        event_time=record.get("eventTime", ""),
+        region=record.get("awsRegion", ""),
+        account_id=record.get("recipientAccountId", ""),
         actor=ident.get("userName") or ident.get("arn", "unknown"),
         source_ip=record.get("sourceIPAddress"),
-        resource_type=rtype, resource_id=rid, details=details)
+        resource_type=rtype,
+        resource_id=rid,
+        details=details,
+        raw_payload=raw_copy,
+    )
+
+
+def normalize_azure(record: dict) -> Optional[NormalizedEvent]:
+    """Provider stub for Azure Activity Log events. Detailed parsing in subsequent phase."""
+    # Azure unique event ID: eventDataId is the standard unique event record identifier.
+    # We do NOT use correlationId because it groups multiple distinct operations/events.
+    event_id = str(record.get("eventDataId") or record.get("id") or record.get("eventID") or "").strip()
+    if not event_id:
+        return None
+    return NormalizedEvent(
+        event_id=event_id,
+        provider=CloudProvider.AZURE,
+        source=str(record.get("resourceProvider", "") or record.get("eventSource", "Microsoft.Resources")),
+        event_name=str(record.get("operationName", "") or record.get("eventName", "")),
+        event_time=str(record.get("eventTimestamp", "") or record.get("eventTime", "")),
+        region=str(record.get("resourceLocation", "") or record.get("region", "")),
+        account_id=str(record.get("subscriptionId", "") or record.get("account_id", "")),
+        actor=str(record.get("caller", "") or record.get("actor", "unknown")),
+        source_ip=record.get("callerIpAddress") or record.get("source_ip"),
+        resource_type=str(record.get("resourceType", "") or record.get("resource_type", "")),
+        resource_id=str(record.get("resourceId", "") or record.get("resource_id", "")),
+        details=record.get("details") or {},
+        raw_payload=dict(record),
+    )
+
+
+NORMALIZERS: dict[CloudProvider, Callable[[dict], Optional[NormalizedEvent]]] = {
+    CloudProvider.AWS: normalize_aws,
+    CloudProvider.AZURE: normalize_azure,
+}
+
+
+def detect_provider(record: dict) -> CloudProvider:
+    """Infers cloud provider from event signature if not explicitly specified."""
+    raw = record.get("detail", record)
+    if "eventSource" in raw and ("awsRegion" in raw or "recipientAccountId" in raw):
+        return CloudProvider.AWS
+    if "correlationId" in raw or "subscriptionId" in raw or "resourceProvider" in raw or "operationName" in raw:
+        return CloudProvider.AZURE
+    # Default to AWS for backward compatibility with existing tests and submissions
+    return CloudProvider.AWS
+
+
+def normalize(record: dict, provider: Optional[Union[str, CloudProvider]] = None) -> Optional[NormalizedEvent]:
+    """Provider-aware dispatch to normalize a raw cloud record."""
+    if provider is not None:
+        target_provider = CloudProvider(provider)
+    else:
+        target_provider = detect_provider(record)
+
+    handler = NORMALIZERS.get(target_provider)
+    if not handler:
+        raise ValueError(f"Unsupported cloud provider: {target_provider}")
+    return handler(record)

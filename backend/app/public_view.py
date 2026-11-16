@@ -33,10 +33,10 @@ def public_incident(incident: Incident):
         'description': 'A historical configuration change matched the project detection rule. Identifying details are hidden.',
         'severity': raw['severity'], 'severity_score': raw['severity_score'],
         'severity_reasons': [r for r in raw['severity_reasons'] if r in REASONS],
-        'status': raw['status'], 'provider': 'aws',
+        'status': raw['status'], 'provider': raw.get('provider', 'aws'),
         'resource_type': raw['resource_type'], 'resource_id': alias, 'actor': 'Hidden',
         'event': {
-            'event_id': event['event_id'], 'origin': event['origin'], 'provider': 'aws',
+            'event_id': event['event_id'], 'origin': event['origin'], 'provider': event.get('provider', 'aws'),
             'source': {'open_ssh_security_group':'ec2.amazonaws.com', 'public_s3_bucket':'s3.amazonaws.com',
                        'excessive_iam_permission':'iam.amazonaws.com'}[kind],
             'event_name': event['event_name'], 'event_time': event['event_time'],

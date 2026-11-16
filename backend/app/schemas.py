@@ -34,34 +34,41 @@ class IncidentType(str, Enum):
     OPEN_SSH = "open_ssh_security_group"
 
 
+class CloudProvider(str, Enum):
+    AWS = "aws"
+    AZURE = "azure"
+
+
 class EventOrigin(str, Enum):
     DEMO = "demo"
     AWS_CLOUDTRAIL = "aws-cloudtrail"
+    AZURE_ACTIVITY_LOG = "azure-activity-log"
     FIXTURE = "fixture"
     SUBMITTED = "submitted"
 
 
 class NormalizedEvent(BaseModel):
-    """Cloud-agnostic event. Azure/GCP normalizers will produce this same shape."""
+    """Provider-independent normalized cloud event structure."""
     event_id: str
     origin: EventOrigin = EventOrigin.SUBMITTED
-    provider: str = "aws"
-    source: str                      # e.g. s3.amazonaws.com
-    event_name: str                  # e.g. PutBucketAcl
-    event_time: str
-    region: str
-    account_id: str
-    actor: str
+    provider: CloudProvider = CloudProvider.AWS
+    source: str                      # e.g. s3.amazonaws.com or Microsoft.Storage
+    event_name: str                  # action, e.g. PutBucketAcl or Microsoft.Storage/storageAccounts/write
+    event_time: str                  # timestamp in ISO 8601
+    region: str                      # region/location, e.g. ap-south-1 or eastus
+    account_id: str                  # account or Azure subscription ID
+    actor: str                       # identity / caller principal
     source_ip: Optional[str] = None
-    resource_type: str               # s3_bucket | iam_principal | security_group
-    resource_id: str
+    resource_type: str               # resource type, e.g. s3_bucket | iam_principal | security_group
+    resource_id: str                 # resource identifier or ARN / Resource ID
     details: dict[str, Any] = Field(default_factory=dict)
+    raw_payload: Optional[dict[str, Any]] = Field(default_factory=dict)
 
 
 class PlaybookStep(BaseModel):
     title: str
     action: str
-    command: Optional[str] = None    # example AWS CLI command
+    command: Optional[str] = None    # example remediation command
     done: bool = False
 
 
@@ -80,7 +87,7 @@ class Incident(BaseModel):
     severity_score: int
     severity_reasons: list[str]
     status: Status = Status.DETECTED
-    provider: str = "aws"
+    provider: CloudProvider = CloudProvider.AWS
     resource_type: str
     resource_id: str
     actor: str

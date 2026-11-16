@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .engine import process_event
-from .schemas import Incident, Severity, Status, EventOrigin
+from .schemas import CloudProvider, Incident, Severity, Status, EventOrigin
 from .store import InMemoryStore, InvalidTransition
 from .sqlite_store import SQLiteStore
 from .public_view import public_incident
@@ -61,14 +61,21 @@ class EventResult(BaseModel):
     incident: Optional[Incident] = None
 
 
-def ingest(raw: dict, origin: EventOrigin = EventOrigin.SUBMITTED) -> EventResult:
+def ingest(raw: dict, origin: EventOrigin = EventOrigin.SUBMITTED, provider: Optional[str] = None) -> EventResult:
     """Ingest event: engine -> store."""
     try:
-        incident = process_event(raw, origin)
+        incident = process_event(raw, origin, provider=provider)
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise HTTPException(422, f"Could not parse event, missing or invalid field: {exc!r}")
     if incident is None:
         return EventResult(detected=False, message="No incident: event is not monitored or is harmless.")
+
+    # Validate provider and origin consistency to prevent attribution corruption
+    if incident.provider == CloudProvider.AZURE and origin == EventOrigin.AWS_CLOUDTRAIL:
+        raise HTTPException(422, "Origin 'aws-cloudtrail' cannot be used with an Azure event")
+    if incident.provider == CloudProvider.AWS and origin == EventOrigin.AZURE_ACTIVITY_LOG:
+        raise HTTPException(422, "Origin 'azure-activity-log' cannot be used with an AWS event")
+
     saved, created = store.add(incident)
     if not created:
         return EventResult(detected=True, duplicate=True, incident=saved,
@@ -92,9 +99,10 @@ def get_incident(incident_id: str):
 
 @app.post("/events", response_model=EventResult, dependencies=[Depends(require_operator_key)])
 def post_event(response: Response, raw: dict[str, Any] = Body(...),
-               origin: Literal["submitted", "aws-cloudtrail", "fixture"] = "submitted"):
-    """Send one CloudTrail record (or EventBridge envelope). 201 = new incident, 200 = otherwise."""
-    result = ingest(raw, EventOrigin(origin))
+               origin: Literal["submitted", "aws-cloudtrail", "azure-activity-log", "fixture"] = "submitted",
+               provider: Optional[Literal["aws", "azure"]] = None):
+    """Send one cloud audit record (CloudTrail, EventBridge, or Azure Activity Log). 201 = new incident, 200 = otherwise."""
+    result = ingest(raw, EventOrigin(origin), provider=provider)
     if result.detected and not result.duplicate:
         response.status_code = 201
     return result
